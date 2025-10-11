@@ -8,7 +8,7 @@ import Profile from "./pages/Profile";
 import Materi from "./pages/Materi";
 import Rules from "./pages/Rules";
 import './index.css';
-import './app.css'
+import './App.css'
 import 'katex/dist/katex.min.css';
 
 // 1. Definisikan semua rute aplikasi lu pake cara baru yang canggih
