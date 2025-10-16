@@ -223,7 +223,7 @@ function Lobby() {
             <p className="text-md sm:text-lg md:text-xl text-gray-400 mb-8">Siap mengasah otak sambil seru-seruan?</p>
             <div className='flex flex-col md:flex-row gap-4 md:gap-8 mt-8 sm:mt-12 w-full'>
                 <button onClick={() => setFormView('create')} className="w-full text-center p-6 sm:p-8 md:p-10 bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-lg font-bold text-xl sm:text-2xl transition-transform transform hover:scale-105">Buat Game Baru</button>
-                <button onClick={() => setFormView('join')} className="w-full text-center p-6 sm:p-8 md:p-10 bg-cyan-600 hover:bg-cyan-700 rounded-xl shadow-lg font-bold text-xl sm:text-2xl transition-transform transform hover:scale-105">Gabung Pake Kode</button>
+                <button onClick={() => setFormView('join')} className="w-full text-center p-6 sm:p-8 md:p-10 bg-cyan-600 hover:bg-cyan-700 rounded-xl shadow-lg font-bold text-xl sm:text-2xl transition-transform transform hover:scale-105">Bergabung Menggunakan Kode</button>
             </div>
         </>
     );
@@ -238,7 +238,7 @@ function Lobby() {
         return (
             <div className="bg-gray-800 p-6 sm:p-8 rounded-xl shadow-lg w-full max-w-md mx-auto mt-8 relative animate-fade-in">
                 <button onClick={() => { setFormView(null); setError(''); }} className="absolute top-4 left-4 text-gray-400 hover:text-white transition-colors"><ArrowLeftIcon /></button>
-                <h2 className="text-2xl sm:text-3xl font-bold mb-6 text-center">{isCreate ? 'Buat Game Baru' : 'Gabung Pake Kode'}</h2>
+                <h2 className="text-2xl sm:text-3xl font-bold mb-6 text-center">{isCreate ? 'Buat Game Baru' : 'Bergabung Menggunakan Kode'}</h2>
                 <div className="space-y-4">
                     <input type="text" value={playerName} onChange={(e) => setPlayerName(e.target.value)} placeholder="Nama Panggilanmu..." className={`w-full px-4 py-3 bg-gray-700 text-white rounded-lg border-2 border-gray-600 focus:outline-none focus:ring-2 focus:ring-${color}-500 text-base sm:text-lg`} />
                     {!isCreate && (<input type="text" inputMode="numeric" pattern="[0-9]*" maxLength="6" value={joinCode} onChange={(e) => setJoinCode(e.target.value.replace(/\D/g, ''))} placeholder="Kode Lobi 6 Digit..." className={`w-full px-4 py-3 bg-gray-700 text-white rounded-lg border-2 border-gray-600 focus:outline-none focus:ring-2 focus:ring-${color}-500 text-base sm:text-lg`} />)}

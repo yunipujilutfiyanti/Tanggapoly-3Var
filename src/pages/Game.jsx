@@ -4,7 +4,6 @@ import { useParams, useNavigate, useBlocker } from 'react-router-dom';
 import { FaTrophy, FaQuestionCircle, FaHourglassHalf, FaClipboard } from "react-icons/fa";
 import Board from "../components/Board";
 import { questionPacks } from "../components/questions";
-import { Helmet } from 'react-helmet-async'; // <-- Jangan lupa import SEO-nya nanti
 
 // Konstanta tidak berubah
 const specialMoves = {
@@ -29,14 +28,7 @@ function Game() {
     const [copied, setCopied] = useState(false);
     const [visualDice, setVisualDice] = useState([1, 1]);
     const [visualPlayers, setVisualPlayers] = useState(null);
-    // const [showLeaverModal, setShowLeaverModal] = useState(false); // <-- DIBUANG
 
-    const localPlayerIdRef = useRef(localPlayerId);
-    const gameStateRef = useRef(gameState);
-    useEffect(() => { localPlayerIdRef.current = localPlayerId; }, [localPlayerId]);
-    useEffect(() => { gameStateRef.current = gameState; }, [gameState]);
-
-    // Blocker tetap berguna kalau user sengaja klik back/close tab
     const blocker = useBlocker(
         ({ currentLocation, nextLocation }) =>
             gameState && !gameState.finished &&
@@ -55,9 +47,8 @@ function Game() {
             setLoading(true);
             const { data, error } = await supabase.from('games').select('*').eq('id', gameId).single();
             if (error || !data) {
-                console.error("Game gak ketemu:", error);
-                // Ganti alert dengan console.log biar gak ganggu
-                console.log('Anjir, Gamenya gak ketemu atau udah bubar, le!');
+                console.error("Game tidak ditemukan:", error);
+                alert('Gamenya tidak ditemukan atau sudah dibubar');
                 navigate('/lobby');
             } else {
                 setGameState(data);
@@ -69,32 +60,15 @@ function Game() {
 
         fetchInitialGame();
 
-        const channel = supabase.channel(`game-room-${gameId}`, {
-            config: {
-                presence: {
-                    key: savedPlayerId,
-                },
-            },
-        });
+        const channel = supabase.channel(`game-room-${gameId}`);
 
         channel.on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'games', filter: `id=eq.${gameId}` },
             (payload) => {
                 setGameState(payload.new);
             }
         );
-
-        // ▼▼▼ BAGIAN INI DIAMANKAN (DIBUANG) ▼▼▼
-        // channel.on('presence', { event: 'leave' }, ({ leftPresences }) => {
-        //     if (gameStateRef.current && !gameStateRef.current.finished) {
-        //         setShowLeaverModal(true);
-        //     }
-        // });
-
-        channel.subscribe(async (status) => {
-            if (status === 'SUBSCRIBED') {
-                await channel.track({ online_at: new Date().toISOString() });
-            }
-        });
+          
+        channel.subscribe();
 
         return () => {
             supabase.removeChannel(channel);
@@ -103,11 +77,8 @@ function Game() {
 
     useEffect(() => { if (gameState && !rolling) { setVisualPlayers(gameState.players); } }, [gameState?.players]);
     useEffect(() => { if (gameState && gameState.players.length === 3 && !gameState.activePack && localPlayerId === 1) { const setInitialPack = async () => { const randomPack = questionPacks[Math.floor(Math.random() * questionPacks.length)]; await supabase.from('games').update({ activePack: randomPack }).eq('id', gameId); }; setInitialPack(); } }, [gameState, localPlayerId, gameId]);
-    useEffect(() => { if (gameState?.is_rolling && !rolling) { setRolling(true); const diceAnimationDuration = 1500; const diceIntervalTime = 100; const stepDuration = 400; const animationInterval = setInterval(() => { setVisualDice([Math.floor(Math.random() * 6) + 1, Math.floor(Math.random() * 6) + 1]); }, diceIntervalTime); setTimeout(() => { clearInterval(animationInterval); setVisualDice(gameState.diceRoll); const { turn, players, diceRoll } = gameState; const currentPlayer = players[turn]; const startPosition = currentPlayer.position; const fatedSum = diceRoll[0] + diceRoll[1]; const newPosition = Math.min(startPosition + fatedSum, 15); const path = []; for (let i = startPosition + 1; i <= newPosition; i++) { path.push(i); } if (path.length === 0) { if (localPlayerId === turn + 1) { updateSupabaseAfterAnimation(newPosition, diceRoll); } else { setRolling(false); } return; } let stepIndex = 0; const stepInterval = setInterval(() => { const currentStep = path[stepIndex]; setVisualPlayers(prev => prev.map(p => p.id === currentPlayer.id ? { ...p, position: currentStep } : p)); stepIndex++; if (stepIndex >= path.length) { clearInterval(stepInterval); const moveData = specialMoves[newPosition]; const finalPosition = (typeof moveData === 'object' && moveData !== null) ? moveData.end : (moveData || newPosition); if (newPosition !== finalPosition) { setTimeout(() => { setVisualPlayers(prev => prev.map(p => p.id === currentPlayer.id ? { ...p, position: finalPosition } : p)); if (localPlayerId === turn + 1) { setTimeout(() => updateSupabaseAfterAnimation(finalPosition, diceRoll), 800); } else { setTimeout(() => setRolling(false), 800); } }, 500); } else { if (localPlayerId === turn + 1) { updateSupabaseAfterAnimation(finalPosition, diceRoll); } else { setRolling(false); } } } }, stepDuration); }, diceAnimationDuration); } }, [gameState?.is_rolling]);
+    useEffect(() => { if (gameState?.is_rolling && !rolling) { setRolling(true); const diceAnimationDuration = 1500; const diceIntervalTime = 100; const stepDuration = 400; const animationInterval = setInterval(() => { setVisualDice([Math.floor(Math.random() * 6) + 1, Math.floor(Math.random() * 6) + 1]); }, diceIntervalTime); setTimeout(() => { clearInterval(animationInterval); setVisualDice(gameState.diceRoll); const { turn, players, diceRoll } = gameState; const currentPlayer = players[turn]; if (!currentPlayer) { setRolling(false); return; } const startPosition = currentPlayer.position; const fatedSum = diceRoll[0] + diceRoll[1]; const newPosition = Math.min(startPosition + fatedSum, 15); const path = []; for (let i = startPosition + 1; i <= newPosition; i++) { path.push(i); } if (path.length === 0) { if (localPlayerId === turn + 1) { updateSupabaseAfterAnimation(newPosition, diceRoll); } else { setRolling(false); } return; } let stepIndex = 0; const stepInterval = setInterval(() => { const currentStep = path[stepIndex]; setVisualPlayers(prev => prev.map(p => p.id === currentPlayer.id ? { ...p, position: currentStep } : p)); stepIndex++; if (stepIndex >= path.length) { clearInterval(stepInterval); const moveData = specialMoves[newPosition]; const finalPosition = (typeof moveData === 'object' && moveData !== null) ? moveData.end : (moveData || newPosition); if (newPosition !== finalPosition) { setTimeout(() => { setVisualPlayers(prev => prev.map(p => p.id === currentPlayer.id ? { ...p, position: finalPosition } : p)); if (localPlayerId === turn + 1) { setTimeout(() => updateSupabaseAfterAnimation(finalPosition, diceRoll), 800); } else { setTimeout(() => setRolling(false), 800); } }, 500); } else { if (localPlayerId === turn + 1) { updateSupabaseAfterAnimation(finalPosition, diceRoll); } else { setRolling(false); } } } }, stepDuration); }, diceAnimationDuration); } }, [gameState?.is_rolling, localPlayerId]);
     
-    // ▼▼▼ FUNGSI INI JUGA DIBUANG KARENA UDAH GAK DIPAKE ▼▼▼
-    // const handleLeaverAndExit = async () => { ... };
-
     const updateSupabaseAfterAnimation = async (finalPosition, fatedFaces) => { const { turn, players, activatedEquations = [], activePack } = gameState; const currentPlayer = players[turn]; const targetEquationIds = Object.keys(activePack.equations).map(Number); const isTarget = targetEquationIds.includes(finalPosition); const isAlreadyActivated = activatedEquations.some(eq => eq.number === finalPosition); let newActivatedEquations = [...activatedEquations]; if (isTarget && !isAlreadyActivated) { newActivatedEquations.push({ number: finalPosition, text: allEquations[finalPosition] }); } const newPlayers = players.map(p => p.id === currentPlayer.id ? { ...p, position: finalPosition, dice: fatedFaces } : p); const nextTurn = (turn + 1) % players.length; const newPhase = newActivatedEquations.length >= 3 ? "answer" : "dice"; await supabase.from('games').update({ players: newPlayers, turn: nextTurn, phase: newPhase, activatedEquations: newActivatedEquations, is_rolling: false, }).eq('id', gameId); setRolling(false); };
     const rollDice = async () => { if (rolling || !gameState || !gameState.activePack || gameState.phase !== 'dice' || Number(gameState.turn) + 1 !== localPlayerId) return; const { activePack, activatedEquations = [] } = gameState; const targetRolls = Object.keys(activePack.equations).map(Number).sort((a, b) => a - b); const targetNumber = targetRolls[activatedEquations.length] || targetRolls[0]; let fatedSum = targetNumber; const entryPoint = specialMoveEndpoints[targetNumber]; if (entryPoint) { fatedSum = entryPoint; } const fatedFaces = getDiceFacesForSum(fatedSum); await supabase.from('games').update({ diceRoll: fatedFaces, is_rolling: true, }).eq('id', gameId); };
     const copyToClipboard = () => { if (gameState?.join_code) { navigator.clipboard.writeText(gameState.join_code).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }); } };
@@ -123,16 +94,12 @@ function Game() {
     if (gameState.players.length < 3 && !gameState.finished) {
         return (
             <main className="min-h-screen bg-gray-900 p-8 text-white flex flex-col justify-center items-center">
-                <Helmet>
-                    <title>Menunggu Pemain - Tanggapoly 3Var</title>
-                    <meta name="description" content="Menunggu pemain lain untuk bergabung ke dalam permainan Tanggapoly 3Var." />
-                </Helmet>
                 <div className="text-center">
                     <FaHourglassHalf className="text-7xl text-cyan-400 mb-6 animate-pulse" />
                     <h2 className="text-4xl font-bold mb-4">Menunggu Pemain Lain...</h2>
                     <p className="text-xl text-gray-400 mb-8">{gameState.players.length} / 3 pemain telah bergabung.</p>
                     <div className='mb-8'>
-                        <p className='text-lg text-gray-300 mb-2'>Kasih kode ini ke temen lu!</p>
+                        <p className='text-lg text-gray-300 mb-2'>Kasih kode ini ke temanmu!</p>
                         <div className='flex items-center justify-center gap-3'>
                             <p className="bg-gray-950 border-2 border-dashed border-cyan-500 text-cyan-400 text-4xl font-mono tracking-widest px-8 py-3 rounded-lg">
                                 {gameState.join_code}
@@ -169,14 +136,7 @@ function Game() {
 
     return (
         <main className="min-h-screen bg-gray-900 p-4 sm:p-8 text-center">
-             <Helmet>
-                <title>Permainan Berlangsung - Tanggapoly 3Var</title>
-                <meta name="description" content="Permainan edukasi matematika Tanggapoly 3Var sedang berlangsung." />
-            </Helmet>
             
-            {/* ▼▼▼ MODAL INI JUGA DIBUANG SEMUA ▼▼▼ */}
-            {/* {showLeaverModal && ( ... )} */}
-
             {blocker && blocker.state === 'blocked' && (
                 <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex justify-center items-center z-50 animate-fade-in">
                     <div className="bg-slate-800 rounded-xl shadow-2xl p-6 sm:p-8 border-t-4 border-red-500 text-white max-w-sm w-full mx-4 transform transition-all animate-slide-up">
@@ -184,14 +144,17 @@ function Game() {
                         <p className="text-slate-300 mb-8">Semua progres di game ini bakal hilang kalo kamu keluar sekarang.</p>
                         <div className="flex justify-center gap-4">
                             <button
-                                onClick={() => blocker.proceed()}
+                                onClick={() => {
+                                    localStorage.removeItem(`tanggapoly_player_id_${gameId}`);
+                                    blocker.proceed();
+                                }}
                                 className="px-8 py-3 bg-red-600 hover:bg-red-700 rounded-lg font-bold text-white transition-transform transform hover:scale-105 shadow-lg shadow-red-500/30">
                                 Ya, Keluar
                             </button>
                             <button
                                 onClick={() => blocker.reset()}
                                 className="px-8 py-3 bg-slate-600 hover:bg-slate-500 rounded-lg font-bold text-white transition-transform transform hover:scale-105 shadow-lg">
-                                Gak Jadi
+                                Batal
                             </button>
                         </div>
                     </div>
@@ -289,3 +252,4 @@ function Game() {
 }
 
 export default Game;
+
