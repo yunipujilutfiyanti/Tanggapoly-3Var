@@ -1,33 +1,66 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import { supabase } from '../supabaseClient';
 import { useParams, useNavigate, useBlocker } from 'react-router-dom';
-import { FaTrophy, FaQuestionCircle, FaHourglassHalf, FaClipboard } from "react-icons/fa";
+import { FaHourglassHalf, FaClipboard, FaTimes, FaExclamationTriangle } from "react-icons/fa";
 import Board from "../components/Board";
-import { questionPacks } from "../components/questions";
 
-// Konstanta tidak berubah
-const specialMoves = {
-    '6': { end: 15, startPos: [0.7, 0.8], endPos: [0.8, 0.9] },
-    '9': { end: 14, startPos: [0.4, 0.5], endPos: [0.7, 0.7] },
-    '10': { end: 13, startPos: [0.9, 0.9], endPos: [0.6, 0.8] },
-    5: 1, 11: 4
+// --- KONFIGURASI SOUND EFFECT ---
+const sfx = {
+    roll: new Audio('/sounds/dadu.mp3'),
+    step: new Audio('/sounds/pion_bergerak.mp3'),
+    correct: new Audio('/sounds/benar.mp3'),
+    wrong: new Audio('/sounds/salah.mp3'),
+    ladder: new Audio('/sounds/naik.mp3'),
+    snake: new Audio('/sounds/turun.mp3'),
+    win: new Audio('/sounds/finish.mp3'),
+    start: new Audio('/sounds/start.mp3')
 };
-const allEquations = { 1: "2x+y+z=7", 2: "3x+2y+z=13", 3: "x+y+2z=10", 4: "x+y-z=2", 7: "2x-y+z=3", 8: "2x+2y+z=12", 11: "x-y+4z=10", 12: "x+2y+z=9", 13: "4x+y-z=10", 14: "2x+y-z=5", 15: "x+y+2z=9" };
-const getDiceFacesForSum = (sum) => { if (sum > 12 || sum < 2) return [1, 1]; for (let i = 6; i >= 1; i--) { const j = sum - i; if (j >= 1 && j <= 6) { return [i, j]; } } return [1, 1]; };
-const specialMoveEndpoints = Object.entries(specialMoves).reduce((acc, [start, moveData]) => { const endPosition = (typeof moveData === 'object' && moveData !== null) ? moveData.end : moveData; acc[endPosition] = Number(start); return acc; }, {});
-const colorRingClasses = { red: 'focus:ring-red-500', blue: 'focus:ring-blue-500', green: 'focus:ring-green-500' };
 
+const playSound = (type) => {
+    if (sfx[type]) {
+        sfx[type].currentTime = 0;
+        sfx[type].play().catch(err => console.log("Browser nge-block autoplay:", err));
+    }
+};
+
+const stopSound = (type) => {
+    if (sfx[type]) {
+        sfx[type].pause();
+        sfx[type].currentTime = 0;
+    }
+};
+
+const specialMoves = {
+    4: 7, 12: 23, 16: 20, 14: 11, 26: 13, 9: 3
+};
+
+const TARGET_FINISH = 29;
 
 function Game() {
     const { gameId } = useParams();
     const navigate = useNavigate();
+
     const [gameState, setGameState] = useState(null);
     const [loading, setLoading] = useState(true);
+
     const [rolling, setRolling] = useState(false);
+    const [spinning, setSpinning] = useState(false);
+
     const [localPlayerId, setLocalPlayerId] = useState(null);
     const [copied, setCopied] = useState(false);
-    const [visualDice, setVisualDice] = useState([1, 1]);
+
+    const [visualDice, setVisualDice] = useState([1]);
     const [visualPlayers, setVisualPlayers] = useState(null);
+
+    const [quizAnswer, setQuizAnswer] = useState("");
+    const [answerFeedback, setAnswerFeedback] = useState(null);
+
+    const [bankSoal, setBankSoal] = useState([]);
+
+    const [showCancelModal, setShowCancelModal] = useState(false);
+    const [showConfirmExitModal, setShowConfirmExitModal] = useState(false);
+
+    const [hasPlayedStartSound, setHasPlayedStartSound] = useState(false);
 
     const blocker = useBlocker(
         ({ currentLocation, nextLocation }) =>
@@ -35,221 +68,399 @@ function Game() {
             currentLocation.pathname !== nextLocation.pathname
     );
 
+    const promptForceExit = () => {
+        setShowConfirmExitModal(true);
+    };
+
+    const executeForceExit = async () => {
+        setShowConfirmExitModal(false);
+        await supabase.from('games').update({ finished: true, phase: 'cancelled' }).eq('id', gameId);
+        localStorage.removeItem(`tanggapoly_player_id_${gameId}`);
+        navigate('/');
+        window.location.reload();
+    };
+
+    const getQuestionForPosition = (position) => {
+        if (!bankSoal || bankSoal.length === 0) return null;
+
+        const validSquares = [0, 1, 2, 3, 5, 6, 7, 8, 10, 11, 13, 15, 17, 18, 19, 20, 21, 22, 23, 24, 25, 27, 28];
+
+        let index = validSquares.indexOf(position);
+        if (index === -1) index = 0;
+
+        return bankSoal[index % bankSoal.length];
+    };
+
     useEffect(() => {
         const savedPlayerId = localStorage.getItem(`tanggapoly_player_id_${gameId}`);
-        if (!savedPlayerId) {
-            navigate('/lobby');
-            return;
-        }
-        setLocalPlayerId(Number(savedPlayerId));
+        if (!savedPlayerId) { navigate('/'); return; }
+
+        setLocalPlayerId(savedPlayerId === 'host' ? 'host' : Number(savedPlayerId));
 
         const fetchInitialGame = async () => {
             setLoading(true);
-            const { data, error } = await supabase.from('games').select('*').eq('id', gameId).single();
-            if (error || !data) {
-                console.error("Game tidak ditemukan:", error);
-                alert('Gamenya tidak ditemukan atau sudah dibubar');
-                navigate('/lobby');
-            } else {
-                setGameState(data);
-                setVisualDice(data.diceRoll || [1, 1]);
-                setVisualPlayers(data.players);
+
+            const { data: gameData, error: gameError } = await supabase.from('games').select('*').eq('id', gameId).single();
+            if (gameError || !gameData || gameData.finished) {
+                localStorage.removeItem(`tanggapoly_player_id_${gameId}`);
+                navigate('/');
+                return;
             }
+
+            const { data: soalData, error: soalError } = await supabase.from('bank_soal').select('*').order('id', { ascending: true });
+            if (soalError) {
+                console.error("Gagal narik bank soal:", soalError);
+            } else {
+                setBankSoal(soalData || []);
+            }
+
+            setGameState(gameData);
+            setVisualDice(gameData.diceRoll || [1]);
+            setVisualPlayers(gameData.players);
+
             setLoading(false);
         };
 
         fetchInitialGame();
 
         const channel = supabase.channel(`game-room-${gameId}`);
-
         channel.on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'games', filter: `id=eq.${gameId}` },
             (payload) => {
-                setGameState(payload.new);
-            }
-        );
-          
-        channel.subscribe();
+                if (payload.new.phase === 'cancelled') {
+                    setShowCancelModal(true);
+                    return;
+                }
 
-        return () => {
-            supabase.removeChannel(channel);
-        };
+                setGameState(payload.new);
+                if (payload.new.turn !== gameState?.turn) {
+                    setQuizAnswer("");
+                    setAnswerFeedback(null);
+                }
+            }
+        ).subscribe();
+
+        return () => { supabase.removeChannel(channel); };
     }, [gameId, navigate]);
 
-    useEffect(() => { if (gameState && !rolling) { setVisualPlayers(gameState.players); } }, [gameState?.players]);
-    useEffect(() => { if (gameState && gameState.players.length === 3 && !gameState.activePack && localPlayerId === 1) { const setInitialPack = async () => { const randomPack = questionPacks[Math.floor(Math.random() * questionPacks.length)]; await supabase.from('games').update({ activePack: randomPack }).eq('id', gameId); }; setInitialPack(); } }, [gameState, localPlayerId, gameId]);
-    useEffect(() => { if (gameState?.is_rolling && !rolling) { setRolling(true); const diceAnimationDuration = 1500; const diceIntervalTime = 100; const stepDuration = 400; const animationInterval = setInterval(() => { setVisualDice([Math.floor(Math.random() * 6) + 1, Math.floor(Math.random() * 6) + 1]); }, diceIntervalTime); setTimeout(() => { clearInterval(animationInterval); setVisualDice(gameState.diceRoll); const { turn, players, diceRoll } = gameState; const currentPlayer = players[turn]; if (!currentPlayer) { setRolling(false); return; } const startPosition = currentPlayer.position; const fatedSum = diceRoll[0] + diceRoll[1]; const newPosition = Math.min(startPosition + fatedSum, 15); const path = []; for (let i = startPosition + 1; i <= newPosition; i++) { path.push(i); } if (path.length === 0) { if (localPlayerId === turn + 1) { updateSupabaseAfterAnimation(newPosition, diceRoll); } else { setRolling(false); } return; } let stepIndex = 0; const stepInterval = setInterval(() => { const currentStep = path[stepIndex]; setVisualPlayers(prev => prev.map(p => p.id === currentPlayer.id ? { ...p, position: currentStep } : p)); stepIndex++; if (stepIndex >= path.length) { clearInterval(stepInterval); const moveData = specialMoves[newPosition]; const finalPosition = (typeof moveData === 'object' && moveData !== null) ? moveData.end : (moveData || newPosition); if (newPosition !== finalPosition) { setTimeout(() => { setVisualPlayers(prev => prev.map(p => p.id === currentPlayer.id ? { ...p, position: finalPosition } : p)); if (localPlayerId === turn + 1) { setTimeout(() => updateSupabaseAfterAnimation(finalPosition, diceRoll), 800); } else { setTimeout(() => setRolling(false), 800); } }, 500); } else { if (localPlayerId === turn + 1) { updateSupabaseAfterAnimation(finalPosition, diceRoll); } else { setRolling(false); } } } }, stepDuration); }, diceAnimationDuration); } }, [gameState?.is_rolling, localPlayerId]);
-    
-    const updateSupabaseAfterAnimation = async (finalPosition, fatedFaces) => { const { turn, players, activatedEquations = [], activePack } = gameState; const currentPlayer = players[turn]; const targetEquationIds = Object.keys(activePack.equations).map(Number); const isTarget = targetEquationIds.includes(finalPosition); const isAlreadyActivated = activatedEquations.some(eq => eq.number === finalPosition); let newActivatedEquations = [...activatedEquations]; if (isTarget && !isAlreadyActivated) { newActivatedEquations.push({ number: finalPosition, text: allEquations[finalPosition] }); } const newPlayers = players.map(p => p.id === currentPlayer.id ? { ...p, position: finalPosition, dice: fatedFaces } : p); const nextTurn = (turn + 1) % players.length; const newPhase = newActivatedEquations.length >= 3 ? "answer" : "dice"; await supabase.from('games').update({ players: newPlayers, turn: nextTurn, phase: newPhase, activatedEquations: newActivatedEquations, is_rolling: false, }).eq('id', gameId); setRolling(false); };
-    const rollDice = async () => { if (rolling || !gameState || !gameState.activePack || gameState.phase !== 'dice' || Number(gameState.turn) + 1 !== localPlayerId) return; const { activePack, activatedEquations = [] } = gameState; const targetRolls = Object.keys(activePack.equations).map(Number).sort((a, b) => a - b); const targetNumber = targetRolls[activatedEquations.length] || targetRolls[0]; let fatedSum = targetNumber; const entryPoint = specialMoveEndpoints[targetNumber]; if (entryPoint) { fatedSum = entryPoint; } const fatedFaces = getDiceFacesForSum(fatedSum); await supabase.from('games').update({ diceRoll: fatedFaces, is_rolling: true, }).eq('id', gameId); };
-    const copyToClipboard = () => { if (gameState?.join_code) { navigator.clipboard.writeText(gameState.join_code).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }); } };
-    const getRankingDetails = (rank) => { switch (rank) { case 0: return { borderColor: 'border-yellow-400', shadow: 'shadow-yellow-200', icon: <FaTrophy className="text-yellow-500" /> }; case 1: return { borderColor: 'border-gray-400', shadow: 'shadow-gray-200', icon: <FaTrophy className="text-gray-400" /> }; case 2: return { borderColor: 'border-orange-400', shadow: 'shadow-orange-200', icon: <FaTrophy className="text-orange-500" /> }; default: return { borderColor: 'border-gray-600', shadow: 'shadow-sm', icon: null }; } };
-    const handleChange = async (playerId, field, value) => { if (!gameState) return; const { players } = gameState; const newPlayers = players.map(p => p.id === playerId ? { ...p, answer: { ...p.answer, [field]: value } } : p); await supabase.from('games').update({ players: newPlayers }).eq('id', gameId); };
-    const submitVariable = async (playerId, variable) => { if (!gameState) return; const { players, activePack } = gameState; const playerToUpdate = players.find(p => p.id === playerId); if (!playerToUpdate || playerToUpdate.submitted?.[variable] || !activePack) return; const now = Date.now(); const correct = Number(playerToUpdate.answer[variable]) === activePack.answer[variable]; const updatedPlayers = players.map(p => { if (p.id === playerId) { return { ...p, score: correct ? p.score + 30 : p.score + 10, submitted: { ...p.submitted, [variable]: true }, time: now }; } return p; }); const allSubmitted = updatedPlayers.every(p => p.submitted?.x && p.submitted?.y && p.submitted?.z); await supabase.from('games').update({ players: updatedPlayers, finished: allSubmitted, phase: allSubmitted ? "result" : "answer" }).eq('id', gameId); };
-    const resetGame = async () => { if (!gameState) return; localStorage.removeItem(`tanggapoly_player_id_${gameId}`); navigate('/lobby'); };
+    useEffect(() => {
+        if (gameState && !rolling) { setVisualPlayers(gameState.players); }
+    }, [gameState?.players]);
 
-    if (loading || !gameState || !visualPlayers) {
-        return <main className="min-h-screen bg-gray-900 p-8 text-white flex justify-center items-center">Loading...</main>;
+    useEffect(() => {
+        if (gameState && gameState.phase !== 'waiting' && !hasPlayedStartSound) {
+            playSound('start');
+            setHasPlayedStartSound(true);
+        }
+    }, [gameState?.phase, hasPlayedStartSound]);
+
+    useEffect(() => {
+        if (gameState?.is_rolling && !rolling) {
+            setRolling(true);
+            setSpinning(true);
+
+            playSound('roll');
+
+            const animationInterval = setInterval(() => {
+                setVisualDice([Math.floor(Math.random() * 6) + 1]);
+            }, 100);
+
+            setTimeout(() => {
+                clearInterval(animationInterval);
+                setVisualDice(gameState.diceRoll);
+                setSpinning(false);
+
+                stopSound('roll');
+
+                setTimeout(() => {
+                    const { turn, players, diceRoll } = gameState;
+                    const currentPlayer = players[turn];
+                    if (!currentPlayer) { setRolling(false); return; }
+
+                    const startPos = currentPlayer.position;
+                    const moveSum = diceRoll[0];
+                    let newPos = startPos + moveSum;
+                    if (newPos > TARGET_FINISH) newPos = TARGET_FINISH;
+
+                    const path = [];
+                    for (let i = startPos + 1; i <= newPos; i++) { path.push(i); }
+
+                    if (path.length === 0) {
+                        if (localPlayerId === turn + 1) updateTurnAfterMove(newPos);
+                        else setRolling(false);
+                        return;
+                    }
+
+                    let stepIndex = 0;
+                    const stepInterval = setInterval(() => {
+                        const currentStep = path[stepIndex];
+                        setVisualPlayers(prev => prev.map(p => p.id === currentPlayer.id ? { ...p, position: currentStep } : p));
+
+                        playSound('step');
+
+                        stepIndex++;
+
+                        if (stepIndex >= path.length) {
+                            clearInterval(stepInterval);
+
+                            setTimeout(() => {
+                                stopSound('step');
+                            }, 300);
+
+                            const finalPos = specialMoves[newPos] || newPos;
+
+                            if (newPos !== finalPos) {
+                                setTimeout(() => {
+                                    const jumpType = finalPos > newPos ? 'ladder' : 'snake';
+                                    playSound(jumpType);
+
+                                    setVisualPlayers(prev => prev.map(p => p.id === currentPlayer.id ? { ...p, position: finalPos } : p));
+
+                                    setTimeout(() => {
+                                        stopSound(jumpType);
+                                        if (localPlayerId === turn + 1) updateTurnAfterMove(finalPos);
+                                        else setRolling(false);
+                                    }, 800);
+                                }, 600);
+                            } else {
+                                setTimeout(() => {
+                                    if (localPlayerId === turn + 1) updateTurnAfterMove(finalPos);
+                                    else setRolling(false);
+                                }, 800);
+                            }
+                        }
+                    }, 400);
+                }, 1500);
+            }, 1200);
+        }
+    }, [gameState?.is_rolling]);
+
+    const updateTurnAfterMove = async (finalPos) => {
+        const { turn, players } = gameState;
+        const isFinished = finalPos >= TARGET_FINISH;
+
+        if (isFinished) {
+            playSound('win');
+        }
+
+        const newPlayers = players.map(p => p.id === players[turn].id ? { ...p, position: finalPos, score: p.score + 10 } : p);
+
+        const nextTurn = (turn + 1) % players.length;
+
+        await supabase.from('games').update({
+            players: newPlayers,
+            turn: isFinished ? turn : nextTurn,
+            phase: isFinished ? 'result' : 'quiz',
+            is_rolling: false,
+            finished: isFinished
+        }).eq('id', gameId);
+
+        setRolling(false);
+    };
+
+    const submitQuiz = async () => {
+        if (!gameState || gameState.phase !== 'quiz') return;
+        const { turn, players } = gameState;
+        const activeQuestion = getQuestionForPosition(players[turn].position);
+
+        if (!activeQuestion) return;
+
+        const currentFailedAttempts = players[turn].failedAttempts || 0;
+
+        const isCorrect = quizAnswer.trim().toLowerCase() === activeQuestion.jawaban.toLowerCase() || currentFailedAttempts >= activeQuestion.jawaban.length;
+
+        if (isCorrect) {
+            playSound('correct');
+            setAnswerFeedback("correct");
+            setTimeout(async () => {
+                stopSound('correct');
+                const newPlayers = players.map(p => p.id === players[turn].id ? { ...p, failedAttempts: 0 } : p);
+
+                await supabase.from('games').update({
+                    phase: 'dice',
+                    players: newPlayers
+                }).eq('id', gameId);
+
+                setAnswerFeedback(null);
+                setQuizAnswer("");
+            }, 1200);
+        } else {
+            playSound('wrong');
+            setAnswerFeedback("wrong");
+
+            setTimeout(async () => {
+                stopSound('wrong');
+                const newPlayers = players.map(p => p.id === players[turn].id ? { ...p, failedAttempts: currentFailedAttempts + 1 } : p);
+
+                const nextTurn = (turn + 1) % players.length;
+
+                await supabase.from('games').update({
+                    turn: nextTurn,
+                    phase: 'quiz',
+                    players: newPlayers
+                }).eq('id', gameId);
+
+                setAnswerFeedback(null);
+                setQuizAnswer("");
+            }, 1500);
+        }
+    };
+
+    const rollDice = async () => {
+        if (rolling || !gameState || gameState.phase !== 'dice' || (gameState.turn + 1) !== localPlayerId) return;
+        const d1 = Math.floor(Math.random() * 6) + 1;
+        await supabase.from('games').update({ diceRoll: [d1], is_rolling: true }).eq('id', gameId);
+    };
+
+    const copyToClipboard = () => { navigator.clipboard.writeText(gameState?.join_code); setCopied(true); setTimeout(() => setCopied(false), 2000); };
+
+    const resetGame = () => {
+        localStorage.removeItem(`tanggapoly_player_id_${gameId}`);
+        navigate('/');
+    };
+
+    const handleCloseCancelModal = () => {
+        localStorage.removeItem(`tanggapoly_player_id_${gameId}`);
+        navigate('/');
+        window.location.reload();
+    };
+
+    if (loading || !gameState || !visualPlayers || bankSoal.length === 0) {
+        return <div className="min-h-screen bg-[#0f172a] flex items-center justify-center text-white font-black italic text-xl">Menyiapkan Papan & Soal...</div>;
     }
 
-    if (gameState.players.length < 3 && !gameState.finished) {
+    if (gameState.phase === 'waiting' && !gameState.finished && gameState.phase !== 'cancelled') {
         return (
-            <main className="min-h-screen bg-gray-900 p-8 text-white flex flex-col justify-center items-center">
-                <div className="text-center">
-                    <FaHourglassHalf className="text-7xl text-cyan-400 mb-6 animate-pulse" />
-                    <h2 className="text-4xl font-bold mb-4">Menunggu Pemain Lain...</h2>
-                    <p className="text-xl text-gray-400 mb-8">{gameState.players.length} / 3 pemain telah bergabung.</p>
-                    <div className='mb-8'>
-                        <p className='text-lg text-gray-300 mb-2'>Kasih kode ini ke temanmu!</p>
-                        <div className='flex items-center justify-center gap-3'>
-                            <p className="bg-gray-950 border-2 border-dashed border-cyan-500 text-cyan-400 text-4xl font-mono tracking-widest px-8 py-3 rounded-lg">
-                                {gameState.join_code}
-                            </p>
-                            <button onClick={copyToClipboard} className="p-4 bg-cyan-600 hover:bg-cyan-700 rounded-lg text-2xl transition-all">
-                                {copied ? '✔️' : <FaClipboard />}
-                            </button>
+            <main className="min-h-screen bg-[#0f172a] p-8 text-white flex flex-col justify-center items-center relative">
+                {showConfirmExitModal && (
+                    <div className="fixed inset-0 z-[999] flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-fade-in">
+                        <div className="bg-[#2a3038] w-full max-w-md rounded-[2rem] border-4 border-yellow-500 shadow-[0_0_50px_rgba(234,179,8,0.2)] p-8 text-center flex flex-col items-center">
+                            <div className="bg-yellow-500/20 p-4 rounded-full mb-6">
+                                <FaExclamationTriangle className="text-5xl text-yellow-500" />
+                            </div>
+                            <h2 className="text-2xl font-black text-white mb-2 uppercase tracking-tight">Yakin mau membatalkan?</h2>
+                            <p className="text-gray-400 font-bold mb-8 text-sm">Semua pemain yang sudah masuk akan dikeluarkan dari lobi ini.</p>
+                            <div className="flex w-full gap-4">
+                                <button onClick={() => setShowConfirmExitModal(false)} className="flex-1 py-3 bg-gray-700 hover:bg-gray-600 text-white font-black text-lg rounded-xl transition-all">Batal</button>
+                                <button onClick={executeForceExit} className="flex-1 py-3 bg-red-600 hover:bg-red-500 text-white font-black text-lg rounded-xl shadow-[0_4px_0_rgb(153,27,27)] active:translate-y-1 active:shadow-none transition-all">Ya, Keluar</button>
+                            </div>
                         </div>
                     </div>
-                    <div className="bg-gray-800 p-6 rounded-lg max-w-sm mx-auto">
-                        <h3 className="text-2xl font-bold mb-4">Pemain di Lobi:</h3>
-                        <ul className="space-y-3 text-left">
-                            {gameState.players.map(p => (
-                                <li key={p.id} className="text-xl flex items-center gap-3">
-                                    <span className="w-4 h-4 rounded-full" style={{ backgroundColor: p.color }}></span>
-                                    {p.name}
-                                    {p.id === localPlayerId && <span className="text-sm text-cyan-400">(Ini Kamu)</span>}
-                                </li>
-                            ))}
-                        </ul>
-                    </div>
+                )}
+
+                <button onClick={promptForceExit} className="absolute top-6 right-6 z-50 bg-red-600/20 hover:bg-red-600 text-red-500 hover:text-white p-4 rounded-full transition-all active:scale-90 border border-red-500/30 hover:border-red-600" title="Batalkan Game">
+                    <FaTimes size={24} />
+                </button>
+
+                <FaHourglassHalf className="text-7xl text-emerald-400 mb-6 animate-pulse" />
+                <h2 className="text-4xl font-black mb-2 uppercase tracking-tighter text-center">Menunggu Host Memulai...</h2>
+                <p className="text-slate-400 mb-8 font-bold uppercase">({gameState.players.length}/4) Murid Terkumpul</p>
+                <div className='flex items-center gap-3 bg-slate-800 p-4 rounded-2xl border-4 border-slate-700 shadow-2xl'>
+                    <p className="text-3xl font-mono tracking-[0.5em] text-emerald-400 font-black">{gameState.join_code}</p>
+                    <button onClick={copyToClipboard} className="p-3 bg-emerald-600 hover:bg-emerald-500 rounded-xl transition-all shadow-lg active:scale-90">{copied ? '✔️' : <FaClipboard />}</button>
                 </div>
             </main>
         );
     }
 
-    const { turn, phase, finished, activatedEquations } = gameState;
-    const localPlayer = gameState.players.find(p => p.id === localPlayerId);
-
-    if (!localPlayer && !finished) {
-        navigate('/lobby');
-        return null;
-    }
+    const { turn, phase, finished } = gameState;
+    const isMyTurn = (turn + 1) === localPlayerId;
+    const activePlayerName = gameState.players[turn]?.name;
+    const activeQuestion = getQuestionForPosition(gameState.players[turn]?.position);
 
     return (
-        <main className="min-h-screen bg-gray-900 p-4 sm:p-8 text-center">
-            
-            {blocker && blocker.state === 'blocked' && (
-                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex justify-center items-center z-50 animate-fade-in">
-                    <div className="bg-slate-800 rounded-xl shadow-2xl p-6 sm:p-8 border-t-4 border-red-500 text-white max-w-sm w-full mx-4 transform transition-all animate-slide-up">
-                        <h3 className="text-2xl font-bold mb-4 text-red-400">Yakin Mau Keluar?</h3>
-                        <p className="text-slate-300 mb-8">Semua progres di game ini bakal hilang kalo kamu keluar sekarang.</p>
-                        <div className="flex justify-center gap-4">
-                            <button
-                                onClick={() => {
-                                    localStorage.removeItem(`tanggapoly_player_id_${gameId}`);
-                                    blocker.proceed();
-                                }}
-                                className="px-8 py-3 bg-red-600 hover:bg-red-700 rounded-lg font-bold text-white transition-transform transform hover:scale-105 shadow-lg shadow-red-500/30">
-                                Ya, Keluar
-                            </button>
-                            <button
-                                onClick={() => blocker.reset()}
-                                className="px-8 py-3 bg-slate-600 hover:bg-slate-500 rounded-lg font-bold text-white transition-transform transform hover:scale-105 shadow-lg">
-                                Batal
-                            </button>
+        <main className="min-h-screen bg-[#0f172a] flex flex-col items-center justify-center overflow-hidden p-4 relative">
+            {showCancelModal && (
+                <div className="fixed inset-0 z-[999] flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-fade-in">
+                    <div className="bg-[#2a3038] w-full max-w-md rounded-[2rem] border-4 border-red-500 shadow-[0_0_50px_rgba(239,68,68,0.3)] p-8 text-center flex flex-col items-center">
+                        <div className="bg-red-500/20 p-4 rounded-full mb-6"><FaTimes className="text-5xl text-red-500" /></div>
+                        <h2 className="text-3xl font-black text-white mb-2 uppercase tracking-tight">Game Dibatalkan</h2>
+                        <p className="text-gray-400 font-bold mb-8">Seseorang telah membatalkan permainan ini. Kamu akan dikembalikan ke Lobi Utama.</p>
+                        <button onClick={handleCloseCancelModal} className="w-full py-4 bg-red-600 hover:bg-red-500 text-white font-black text-xl rounded-xl shadow-[0_4px_0_rgb(153,27,27)] active:translate-y-1 active:shadow-none transition-all uppercase">Ke Lobi Utama</button>
+                    </div>
+                </div>
+            )}
+
+            {showConfirmExitModal && (
+                <div className="fixed inset-0 z-[999] flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-fade-in">
+                    <div className="bg-[#2a3038] w-full max-w-md rounded-[2rem] border-4 border-yellow-500 shadow-[0_0_50px_rgba(234,179,8,0.2)] p-8 text-center flex flex-col items-center">
+                        <div className="bg-yellow-500/20 p-4 rounded-full mb-6"><FaExclamationTriangle className="text-5xl text-yellow-500" /></div>
+                        <h2 className="text-2xl font-black text-white mb-2 uppercase tracking-tight">Yakin mau membatalkan?</h2>
+                        <p className="text-gray-400 font-bold mb-8 text-sm">Permainan akan dibatalkan dan semua pemain akan dikeluarkan dari ruangan ini.</p>
+                        <div className="flex w-full gap-4">
+                            <button onClick={() => setShowConfirmExitModal(false)} className="flex-1 py-3 bg-gray-700 hover:bg-gray-600 text-white font-black text-lg rounded-xl transition-all">Batal</button>
+                            <button onClick={executeForceExit} className="flex-1 py-3 bg-red-600 hover:bg-red-500 text-white font-black text-lg rounded-xl shadow-[0_4px_0_rgb(153,27,27)] active:translate-y-1 active:shadow-none transition-all">Ya, Keluar</button>
                         </div>
                     </div>
                 </div>
             )}
 
-            {finished && (
-                <div className="w-full flex justify-center animate-fade-in mt-8">
-                    <div className="w-full max-w-4xl">
-                        <h3 className="text-3xl text-white font-bold mb-6 flex items-center justify-center gap-3">🏆 Papan Peringkat Akhir 🏆</h3>
-                        <div className="space-y-4">
-                            {gameState.players.slice().sort((a, b) => (b.score === a.score ? a.time - b.time : b.score - a.score)).map((p, idx) => {
-                                const details = getRankingDetails(idx);
-                                return (
-                                    <div key={p.id} className={`flex items-center justify-between p-5 rounded-lg border-2 ${details.borderColor} bg-slate-800 shadow-lg ${details.shadow} transition-all duration-300 hover:scale-105 hover:shadow-xl`}>
-                                        <div className="flex items-center gap-5">
-                                            <span className="text-2xl font-bold text-gray-300 w-10 text-center">{idx < 3 ? details.icon : `#${idx + 1}`}</span>
-                                            <span className="font-semibold text-xl text-white">{p.name}</span>
-                                        </div>
-                                        <span className="font-bold text-2xl text-cyan-400">{p.score} Poin</span>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                        <button
-                            onClick={resetGame}
-                            className="mt-10 px-8 py-4 rounded-lg shadow-lg font-bold text-xl transition-transform transform hover:scale-105 bg-emerald-500 hover:bg-emerald-600 text-white"
-                        >
-                            🔄 Balik ke Lobi
-                        </button>
-                    </div>
-                </div>
+            {!finished && phase !== 'cancelled' && (
+                <button onClick={promptForceExit} className="absolute top-4 right-4 z-50 bg-red-600/80 hover:bg-red-500 text-white p-3 rounded-full shadow-lg transition-all active:scale-90 backdrop-blur-sm border border-red-400" title="Keluar Permainan">
+                    <FaTimes size={20} />
+                </button>
             )}
 
-            {!finished && (
-                <>
-                    {phase === "dice" && (
-                        <div className="mx-auto flex w-full max-w-4xl flex-col items-center gap-4">
-                            <Board {...{ players: visualPlayers, diceRoll: visualDice, turn, phase, specialMoves, allEquations, activatedEquations, rolling }} />
-                            <div className="mt">
-                                <h3 className="text-white mb-2 text-lg"> Giliran <span className="font-semibold" style={{ color: gameState.players?.[turn]?.color }}>{gameState.players?.[turn]?.name}</span> melempar dadu! ({(activatedEquations?.length || 0)}/3 persamaan aktif)</h3>
-                                <button
-                                    onClick={rollDice}
-                                    disabled={rolling || Number(turn) + 1 !== localPlayerId || !gameState.activePack}
-                                    className={`px-6 py-3 rounded-lg shadow-lg font-bold text-lg transition-transform transform hover:scale-105 ${rolling || Number(turn) + 1 !== localPlayerId || !gameState.activePack ? "bg-amber-400/50 text-slate-500 cursor-not-allowed" : "bg-amber-400 hover:bg-amber-500 text-gray-900"}`}
-                                >
-                                    {rolling ? "🎲 Rolling..." : (!gameState.activePack ? 'Nunggu Soal...' : 'Lempar Dadu')}
-                                </button>
-                            </div>
-                        </div>
-                    )}
-                    {phase === "answer" && (
-                        <div className="mx-auto flex w-full max-w-7xl flex-col items-center gap-6 lg:flex-row lg:items-start lg:justify-center lg:gap-8">
-                            <div className="w-full max-w-3xl lg:w-3/5">
-                                <Board {...{ players: visualPlayers, diceRoll: visualDice, turn, phase, specialMoves, allEquations, activatedEquations, rolling }} />
-                            </div>
-                            <div className="w-full max-w-lg lg:w-2/5">
-                                <div className="mt-4 mb-4 lg:mt-0 animate-fade-in">
-                                    <div className="w-full bg-slate-800 p-6 rounded-2xl shadow-2xl border-b-4 border-cyan-500 mb-4 ring-1 ring-white/10">
-                                        <h3 className="text-xl font-bold mb-4 text-white flex items-center justify-center gap-3"><FaQuestionCircle className="text-cyan-400" /> Pecahkan Sistem Persamaan Ini!</h3>
-                                        <div className="text-center font-mono text-xl space-y-3 bg-black/30 p-4 rounded-lg">
-                                            {(activatedEquations || []).sort((a, b) => a.number - b.number).map((eq, index) => (
-                                                <p key={index} className="text-cyan-300 tracking-wider p-2 rounded-md bg-slate-900/50 ring-1 ring-slate-700">{eq.text}</p>
-                                            ))}
-                                        </div>
-                                    </div>
-                                    <div className="bg-gray-800 rounded-xl shadow-lg border-b-8 p-3 flex flex-col gap-4 flex-1" style={{ borderColor: localPlayer.color }}>
-                                        <h4 className="font-bold text-xl text-white text-center pb-4 border-b-2" style={{ borderColor: localPlayer.color }}>  Masukkan Jawabanmu {localPlayer?.name}</h4>
-                                        <div className="space-y-4 pt-2 pb-2">
-                                            {["x", "y", "z"].map((field) => (
-                                                <div key={field} className="flex items-center gap-3">
-                                                    <label htmlFor={`${localPlayer.id}-${field}`} className="text-xl font-bold text-gray-400 w-10">{field.toUpperCase()}</label>
-                                                    <input id={`${localPlayer.id}-${field}`} type="number" placeholder="?"
-                                                        className={`text-center text-xl font-bold border-2 border-gray-600 rounded-lg text-white bg-gray-700 px-3 py-1 w-full focus:outline-none focus:ring-4 disabled:bg-slate-700 disabled:text-slate-400 disabled:cursor-not-allowed ${colorRingClasses[localPlayer.color] || 'focus:ring-gray-400'}`}
-                                                        value={localPlayer.answer?.[field] || ""}
-                                                        onChange={(e) => handleChange(localPlayer.id, field, e.target.value)}
-                                                        disabled={localPlayer.submitted?.[field]}
-                                                    />
-                                                    <button onClick={() => submitVariable(localPlayer.id, field)} disabled={localPlayer.submitted?.[field]}
-                                                        className={`min-w-[120px] px-4 py-1 rounded-lg font-semibold text-white text-lg transition-all duration-200 transform hover:scale-105 ${localPlayer.submitted?.[field] ? 'bg-green-600 cursor-default' : 'bg-blue-500 hover:bg-blue-600'}`}>
-                                                        {localPlayer.submitted?.[field] ? "Dikirim" : "Kirim"}
-                                                    </button>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
+            {/* FIX: TAMPILAN MATCH OVER DILEBARIN (MAX-W-3XL) DAN GRID MENYAMPING */}
+            {finished && phase !== 'cancelled' ? (
+                <div className="bg-[#1e2329] p-8 md:p-12 rounded-[3rem] border-8 border-yellow-400 text-center shadow-2xl animate-fade-in w-full max-w-4xl relative z-20 mx-4">
+                    <h1 className="text-4xl md:text-6xl font-black text-white mb-2 italic uppercase tracking-tighter">
+                        🎉 SELAMATTT! 🎉
+                    </h1>
+
+                    <h2 className="text-lg md:text-2xl text-yellow-400 font-black mb-8 uppercase tracking-widest">
+                        Pemenangnya adalah {gameState.players.slice().sort((a, b) => b.position - a.position)[0].name}!
+                    </h2>
+
+                    {/* Bikin Grid menyamping biar gak manjang kebawah banget */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6 mb-10 text-left">
+                        {gameState.players.slice().sort((a, b) => b.position - a.position).map((p, idx) => {
+                            let medal = "🐢";
+                            if (idx === 0) medal = "🏆";
+                            if (idx === 1) medal = "🥈";
+                            if (idx === 2) medal = "🥉";
+
+                            // Deteksi Juara 1
+                            const isWinner = idx === 0;
+
+                            return (
+                                <div key={p.id} className={`flex items-center justify-between gap-4 p-4 md:p-5 rounded-2xl border-b-4 transition-transform ${isWinner ? 'bg-gradient-to-r from-yellow-300 to-yellow-500 border-yellow-600 scale-105 shadow-[0_0_30px_rgba(250,204,21,0.6)] z-10' : 'bg-white border-slate-300'}`}>
+                                    <span className={`font-black text-xl md:text-2xl flex items-center gap-3 truncate ${isWinner ? 'text-slate-900' : 'text-slate-800'}`}>
+                                        {/* Piala Emas joget */}
+                                        <span className={isWinner ? "text-4xl drop-shadow-md animate-bounce" : "text-3xl"}>{medal}</span>
+                                        <span>#{idx + 1} {p.name}</span>
+                                    </span>
+                                    <span className={`font-black text-xl md:text-2xl whitespace-nowrap ${isWinner ? 'text-red-600 drop-shadow-sm' : 'text-emerald-600'}`}>
+                                        BOX {p.position}
+                                    </span>
                                 </div>
-                            </div>
-                        </div>
-                    )}
-                </>
+                            );
+                        })}
+                    </div>
+
+                    <button onClick={resetGame} className="px-12 py-4 bg-emerald-500 hover:bg-emerald-400 text-white font-black text-xl rounded-2xl shadow-[0_6px_0_rgb(5,150,105)] active:translate-y-1 active:shadow-none transition-all tracking-widest uppercase">
+                        KE LOBBY
+                    </button>
+                </div>
+            ) : (
+                <Board
+                    players={visualPlayers}
+                    turn={turn}
+                    diceRoll={visualDice}
+                    rolling={rolling}
+                    spinning={spinning}
+                    phase={phase}
+                    onRoll={rollDice}
+                    activeQuestion={activeQuestion}
+                    quizAnswer={quizAnswer}
+                    setQuizAnswer={setQuizAnswer}
+                    submitQuiz={submitQuiz}
+                    answerFeedback={answerFeedback}
+                    isMyTurn={isMyTurn}
+                    activePlayerName={activePlayerName}
+                />
             )}
         </main>
     );
 }
 
 export default Game;
-

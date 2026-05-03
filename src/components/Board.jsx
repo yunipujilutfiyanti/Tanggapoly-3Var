@@ -1,274 +1,260 @@
-import React, { useRef, useState, useEffect } from 'react';
-import { FaChessPawn } from 'react-icons/fa';
-import dekorasiImage from '../assets/Logo.png';
+import React from 'react';
+import gambarTangga from '../assets/tanggalurus.svg';
+import gambarTanggaMiring from '../assets/tanggamiring.svg';
+import gambarUlar from '../assets/ular.svg';
+import gambarUlarMangap from '../assets/ularmangap.svg';
 
-const boardLayout = [
-    { type: 'player', player: 1 }, { type: 'path', number: 15 }, { type: 'path', number: 14 }, { type: 'path', number: 13 }, { type: 'path', number: 12 }, { type: 'player', player: 2 },
-    { type: 'dice', player: 1, die: 1 }, { type: 'path', number: 8 }, { type: 'path', number: 9 }, { type: 'path', number: 10 }, { type: 'path', number: 11 }, { type: 'dice', player: 2, die: 1 },
-    { type: 'dice', player: 1, die: 2 }, { type: 'path', number: 7 }, { type: 'path', number: 6 }, { type: 'path', number: 5 }, { type: 'path', number: 4 }, { type: 'dice', player: 2, die: 2 },
-    { type: 'score', player: 1 }, { type: 'path', number: 0, text: 'Start' }, { type: 'path', number: 1 }, { type: 'path', number: 2 }, { type: 'path', number: 3 }, { type: 'score', player: 2 },
-    { type: 'empty' }, { type: 'player', player: 3 }, { type: 'dice', player: 3, die: 1 }, { type: 'dice', player: 3, die: 2 }, { type: 'score', player: 3 }, { type: 'empty' }
-];
+// ASSET PION & DADU
+import pionMerah from '../assets/pionmerah.svg';
+import pionBiru from '../assets/pionbiru.svg';
+import pionHijau from '../assets/pionhijau.svg';
+import pionKuning from '../assets/pionkuning.svg';
+import dice1 from '../assets/dice1.svg';
+import dice2 from '../assets/dice2.svg';
+import dice3 from '../assets/dice3.svg';
+import dice4 from '../assets/dice4.svg';
+import dice5 from '../assets/dice5.svg';
+import dice6 from '../assets/dice6.svg';
 
-const pathMap = {
-    0: 19, 1: 20, 2: 21, 3: 22, 4: 16, 5: 15, 6: 14, 7: 13,
-    8: 7, 9: 8, 10: 9, 11: 10, 12: 4, 13: 3, 14: 2, 15: 1,
+const getPionAsset = (id) => {
+    const assets = { 1: pionMerah, 2: pionBiru, 3: pionHijau, 4: pionKuning };
+    return assets[id] || pionMerah;
 };
 
-const Board = ({ players, diceRoll, turn, phase, specialMoves, allEquations, activatedEquations, rolling }) => {
-    const boardRef = useRef(null);
-    const cellRefs = useRef({});
-    const [svgConnectors, setSvgConnectors] = useState([]);
-    const [boardSize, setBoardSize] = useState({ width: 0, height: 0 });
+const getDiceAsset = (val) => {
+    const assets = { 1: dice1, 2: dice2, 3: dice3, 4: dice4, 5: dice5, 6: dice6 };
+    return assets[val] || dice1;
+};
 
-    useEffect(() => {
-        const boardElement = boardRef.current;
-        if (!boardElement) return;
-
-        let resizeTimer;
-        const observer = new ResizeObserver(entries => {
-            if (entries[0]) {
-                clearTimeout(resizeTimer);
-                resizeTimer = setTimeout(() => {
-                    const { width, height } = entries[0].contentRect;
-                    setBoardSize({ width, height });
-                }, 100);
-            }
-        });
-        observer.observe(boardElement);
-        return () => {
-            observer.disconnect();
-            clearTimeout(resizeTimer);
-        };
-    }, []);
-
-    useEffect(() => {
-        if (!boardRef.current || boardSize.width === 0) return;
-
-        const isMobile = boardSize.width < 640;
-        const cellSize = boardSize.width / 6;
-        const newConnectors = [];
-
-        for (const startNumStr in specialMoves) {
-            const startNum = Number(startNumStr);
-            const moveData = specialMoves[startNum]; // Ambil datanya
-
-            // Cek apakah formatnya canggih (object) atau simpel (number)
-            const isAdvanced = typeof moveData === 'object' && moveData !== null;
-            const endNum = isAdvanced ? moveData.end : moveData;
-
-            const startIndex = pathMap[startNum];
-            const endIndex = pathMap[endNum];
-            const startCell = cellRefs.current[startIndex];
-            const endCell = cellRefs.current[endIndex];
-
-            if (startCell && endCell) {
-                if (endNum > startNum) { // Ini Tangga
-                    let startX, startY, endX, endY;
-
-                    if (isAdvanced) {
-                        // LOGIKA BARU YANG CUSTOM PAKE PERSENTASE [x, y]
-                        // Kalo startPos/endPos gak diisi, pake default biar gak error
-                        const [startPosX, startPosY] = moveData.startPos || [0.5, 0.1];
-                        const [endPosX, endPosY] = moveData.endPos || [0.5, 0.9];
-
-                        startX = startCell.offsetLeft + startCell.offsetWidth * startPosX;
-                        startY = startCell.offsetTop + startCell.offsetHeight * startPosY;
-                        endX = endCell.offsetLeft + endCell.offsetWidth * endPosX;
-                        endY = endCell.offsetTop + endCell.offsetHeight * endPosY;
-                    } else {
-                        // LOGIKA LAMA SEBAGAI FALLBACK (kalo formatnya simpel)
-                        const verticalPadding = isMobile ? 5 : 10;
-                        startX = startCell.offsetLeft + startCell.offsetWidth / 2;
-                        endX = endCell.offsetLeft + endCell.offsetWidth / 2;
-                        startY = startCell.offsetTop + verticalPadding;
-                        endY = endCell.offsetTop + endCell.offsetHeight - verticalPadding;
-
-                        const ladderOffset = isMobile ? cellSize * 0.12 : 35;
-                        startX += ladderOffset;
-                        endX += ladderOffset;
-                    }
-
-                    const deltaX = endX - startX;
-                    const deltaY = endY - startY;
-                    const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
-                    const angle = Math.atan2(deltaY, deltaX);
-                    newConnectors.push({ id: `${startNum}-${endNum}`, type: 'ladder', startX, startY, endX, endY, distance, angle });
-
-                } else { // Ini Ular (logika ular gak diubah, tapi bisa juga dicustom kalo mau)
-                    const padding = isMobile ? cellSize * 0.25 : 15;
-                    let startX = startCell.offsetLeft + padding;
-                    let startY = startCell.offsetTop + startCell.offsetHeight / 2;
-                    let endX = endCell.offsetLeft + endCell.offsetWidth - padding;
-                    let endY = endCell.offsetTop + endCell.offsetHeight / 2;
-
-                    // Ini bisa juga dibikin advanced kalo perlu
-                    if (isAdvanced) {
-                        const [startPosX, startPosY] = moveData.startPos || [0.5, 0.5];
-                        const [endPosX, endPosY] = moveData.endPos || [0.5, 0.5];
-                        startX = startCell.offsetLeft + startCell.offsetWidth * startPosX;
-                        startY = startCell.offsetTop + startCell.offsetHeight * startPosY;
-                        endX = endCell.offsetLeft + endCell.offsetWidth * endPosX;
-                        endY = endCell.offsetTop + endCell.offsetHeight * endPosY;
-                    }
-
-                    const deltaX = endX - startX;
-                    const deltaY = endY - startY;
-                    const angle = Math.atan2(deltaY, deltaX);
-                    const perpAngle = angle + Math.PI / 2;
-                    const curveOffset = isMobile ? cellSize * 1.1 : 70;
-                    const offsetX = curveOffset * Math.cos(perpAngle);
-                    const offsetY = curveOffset * Math.sin(perpAngle);
-                    const cp1X = startX + deltaX * 0.25 + offsetX;
-                    const cp1Y = startY + deltaY * 0.25 + offsetY;
-                    const cp2X = startX + deltaX * 0.75 - offsetX;
-                    const cp2Y = startY + deltaY * 0.75 - offsetY;
-                    const pathData = `M${startX},${startY} C${cp1X},${cp1Y} ${cp2X},${cp2Y} ${endX},${endY}`;
-                    newConnectors.push({ id: `${startNum}-${endNum}`, type: 'snake', path: pathData, startX, startY, endX, endY });
-                }
-            }
+const generateBoard = () => {
+    const rows = 5, cols = 6;
+    let board = [];
+    for (let r = rows - 1; r >= 0; r--) {
+        let row = [];
+        for (let c = 0; c < cols; c++) {
+            let index = r * cols + (r % 2 === 0 ? c : (cols - 1 - c));
+            let label = index === 0 ? "START" : index === 29 ? "FINISH" : index;
+            row.push({ id: index, label: label });
         }
-        setSvgConnectors(newConnectors);
-    }, [specialMoves, boardSize]);
+        board.push(row);
+    }
+    return board;
+};
 
+// FIX: JURUS ACAK HURUF UNIK PER PEMAIN
+const getShuffledIndices = (text, attempts, playerId) => {
+    if (!text || attempts === 0) return [];
 
-    const renderPawns = (cellIndex) => {
-        const playersOnCell = (players || []).filter(p => pathMap[p.position] === cellIndex);
-        if (playersOnCell.length === 0) return null;
+    // 1. Ambil semua index (0, 1, 2, dst)
+    let indices = Array.from({ length: text.length }, (_, i) => i);
+
+    // 2. Acak index-nya pake rumus "Seeding" berdasarkan Player ID
+    for (let i = indices.length - 1; i > 0; i--) {
+        const seed = playerId * (i + 1) * (text.charCodeAt(0) || 1);
+        const j = Math.floor((seed % 100) / 100 * (i + 1));
+        [indices[i], indices[j]] = [indices[j], indices[i]];
+    }
+
+    // 3. Ambil sebanyak jumlah kesalahan (failedAttempts)
+    return indices.slice(0, attempts);
+};
+
+const Board = ({
+    players, turn, diceRoll = [1], rolling = false, spinning = false, phase, onRoll,
+    activeQuestion, quizAnswer, setQuizAnswer, submitQuiz, answerFeedback, isMyTurn, activePlayerName
+}) => {
+    const boardData = generateBoard();
+
+    // Ambil info failedAttempts dan ID pemain yang lagi dapet giliran
+    const currentPlayer = players?.[turn];
+    const currentFailedAttempts = currentPlayer?.failedAttempts || 0;
+    const currentPlayerId = currentPlayer?.id || 1;
+
+    // Panggil fungsi acak clue di sini
+    const revealedIndices = activeQuestion ? getShuffledIndices(activeQuestion.jawaban, currentFailedAttempts, currentPlayerId) : [];
+
+    // PLAYER CARD
+    const PlayerCard = ({ id, colorClass, textColor }) => {
+        const p = players?.find(player => player.id === id);
+        const isActive = (turn + 1) === id;
+        const displayName = p?.name || `Player ${id}`;
+
         return (
-            <div className="absolute bottom-1 right-1 flex flex-wrap-reverse gap-1 justify-end z-40">
-                {playersOnCell.map(p => (<FaChessPawn key={p.id} className="text-sm sm:text-xl lg:text-2xl drop-shadow" style={{ color: p.color }} />))}
+            <div className={`${colorClass} rounded-2xl p-1.5 border-2 ${isActive ? 'border-white ring-4 ring-yellow-400 scale-105 shadow-2xl z-20' : 'border-black/20 z-0'} transition-all duration-300 h-[105px] flex flex-row items-center justify-center gap-1.5 overflow-hidden`}>
+                <img src={getPionAsset(id)} alt={`Pion ${id}`} className={`w-9 h-11 object-contain drop-shadow-md flex-none ${isActive && !rolling ? 'animate-bounce' : ''}`} />
+                <div className="flex flex-col items-center min-w-0 flex-1">
+                    <span
+                        className={`text-[10px] font-black uppercase mb-1 drop-shadow-md truncate w-full text-center px-0.5 ${textColor || 'text-white'}`}
+                        title={displayName}
+                    >
+                        {displayName}
+                    </span>
+                    <div className="bg-white border-2 border-gray-800 rounded-lg px-2.5 py-0.5 flex flex-col items-center shadow-inner min-w-[48px] flex-none">
+                        <span className="text-[8px] font-bold text-gray-800 leading-none">Kotak</span>
+                        <span className="text-xl font-black text-black leading-none mt-0.5">{p?.position || 0}</span>
+                    </div>
+                </div>
             </div>
         );
     };
 
     return (
-        <div ref={boardRef} className="relative grid grid-cols-6 gap-2 sm:gap-4 w-full max-w-sm sm:max-w-md md:max-w-2xl lg:max-w-4xl mx-auto p-2 sm:p-3 bg-indigo-950 rounded-xl shadow-inner border-10 border-gray-400/90 shadow-lg shadow-cyan-400/20">
-            <div className="absolute top-0 left-[16.66%] w-[66.66%] h-[80%] bg-amber-400/90 backdrop-blur-sm rounded-xl pointer-events-none z-0"></div>
-            {boardLayout.map((cell, index) => {
-                const currentPlayer = players?.[turn];
-                return (
-                    <div key={index} ref={el => cellRefs.current[index] = el} className="relative">
-                        {(() => {
-                            switch (cell.type) {
-                                case 'player':
-                                    const playerForCell = players?.find(p => p.id === cell.player);
-                                    if (!playerForCell) return <div className="rounded-lg bg-gray-200 aspect-square" />;
-                                    const ringColorClass = playerForCell.color === 'red' ? 'ring-red-500' : playerForCell.color === 'blue' ? 'ring-blue-500' : 'ring-green-500';
-                                    const playerBoxStyle = { backgroundImage: `linear-gradient(rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0.85)), url(${dekorasiImage})`, backgroundSize: 'cover', backgroundPosition: 'center' };
-                                    return (
-                                        <div className={`flex flex-col justify-center items-center rounded-lg shadow-inner p-1 aspect-square text-center transition-all duration-300 ${currentPlayer?.id === playerForCell.id && phase === 'dice' ? `ring-2 sm:ring-4 ring-offset-2 ${ringColorClass}` : ''}`} style={playerBoxStyle} >
-                                            <FaChessPawn className="text-lg sm:text-2xl md:text-3xl lg:text-4xl mb-0.5 sm:mb-1" style={{ color: playerForCell.color }} />
-                                            <h4 className="font-bold text-[8px] sm:text-xs md:text-sm lg:text-base whitespace-nowrap text-black">{playerForCell.name}</h4>
-                                        </div>
-                                    );
-                                case 'dice':
-                                    const playerForDice = players?.find(p => p.id === cell.player);
-                                    if (!playerForDice) return <div className="rounded-lg bg-gray-200 aspect-square" />;
-                                    const diceBgColor = playerForDice.color === 'red' ? 'bg-red-600' : playerForDice.color === 'blue' ? 'bg-blue-600' : playerForDice.color === 'green' ? 'bg-green-600' : 'bg-gray-400';
-                                    let diceValues = playerForDice.dice || [1, 1];
-                                    if (phase === 'dice' && rolling && currentPlayer?.id === playerForDice.id) { diceValues = diceRoll; }
-                                    const dieValue = cell.die === 1 ? diceValues[0] : diceValues[1];
-                                    return (
-                                        <div className={`flex justify-center items-center rounded-lg ${diceBgColor} shadow-inner p-1 sm:p-2 aspect-square`}>
-                                            <img src={`/dice/dice${dieValue}.png`} alt={`dice-${dieValue}`} className="w-full h-full object-contain rounded-md" />
-                                        </div>
-                                    );
-                                case 'score':
-                                    const playerForScore = players?.find(p => p.id === cell.player);
-                                    let scoreBgClass = 'bg-gray-100';
-                                    let scoreTextClass = 'text-gray-800';
-                                    let scoreLabelClass = 'text-gray-700';
-                                    if (playerForScore) {
-                                        switch (playerForScore.color) {
-                                            case 'red': scoreBgClass = 'bg-red-100'; scoreTextClass = 'text-red-800'; scoreLabelClass = 'text-red-700'; break;
-                                            case 'blue': scoreBgClass = 'bg-blue-100'; scoreTextClass = 'text-blue-800'; scoreLabelClass = 'text-blue-700'; break;
-                                            case 'green': scoreBgClass = 'bg-green-100'; scoreTextClass = 'text-green-800'; scoreLabelClass = 'text-green-700'; break;
-                                        }
-                                    }
-                                    return (
-                                        <div className={`flex flex-col justify-center items-center rounded-lg ${scoreBgClass} shadow-inner p-1 aspect-square`}>
-                                            <span className={`text-[8px] sm:text-xs lg:text-sm ${scoreLabelClass} font-semibold`}>SKOR</span>
-                                            <span className={`font-bold ${scoreTextClass} text-center text-xs sm:text-2xl md:text-3xl lg:text-4xl`}>{playerForScore?.score || 0}</span>
-                                        </div>
-                                    );
-                                case 'path':
-                                    const isSpecialStart = specialMoves[cell.number] !== undefined;
-                                    const isActivated = (activatedEquations || []).some(eq => eq.number === cell.number);
-                                    const bgColor = isActivated ? 'bg-yellow-400 shadow-lg scale-105' : 'bg-stone-100';
-                                    const startBg = cell.text === 'Start' ? 'bg-stone-300 font-bold' : bgColor;
+        <div className="w-full h-screen max-h-[768px] mx-auto p-2 flex flex-col lg:flex-row gap-3 items-center justify-center overflow-hidden bg-transparent">
 
-                                    // ===== BAGIAN YANG DIUBAH ADA DI SINI =====
-                                    const numberClass = cell.text === 'Start'
-                                        ? "text-base sm:text-lg md:text-xl lg:text-2xl"
-                                        : "text-[clamp(8px,2vw,18px)]"; // <-- UDAH PAKE CLAMP()
+            {/* AREA UTAMA BOARD (KIRI) */}
+            <div className="flex-none w-full max-w-[700px] h-full max-h-[620px] relative bg-[#4B2C85] p-3 rounded-[2rem] border-8 border-[#D32F2F] shadow-2xl overflow-hidden flex items-center justify-center">
+                <div className="absolute inset-0 opacity-20 pointer-events-none" style={{ backgroundImage: 'url("https://www.transparenttextures.com/patterns/cubes.png")' }}></div>
 
-                                    return (
-                                        <div className={`relative flex flex-col justify-center items-center rounded-lg shadow p-1 aspect-square ${startBg} transition-all duration-300`}>
-                                            <span className={`absolute top-1 left-1 font-bold text-slate-800 z-10 ${numberClass}`}>{cell.text || cell.number}</span>
-                                            {!isSpecialStart && allEquations[cell.number] && (
-                                                <p className="break-words leading-tight text-center font-semibold text-slate-800 z-10 text-[clamp(7px,1.5vw,16px)]">
-                                                    {allEquations[cell.number]}
-                                                </p>
-                                            )}
-                                            {renderPawns(index)}
-                                        </div>
-                                    );
-                                case 'empty':
-                                    return (<div className="relative rounded-lg bg-gradient-to-br from-yellow-300 via-amber-400 to-yellow-500 shadow-inner aspect-square"> <img src={dekorasiImage} alt="dekorasi" className="w-full h-full object-cover rounded-md opacity-80 mix-blend-multiply" /> </div>);
-                                default:
-                                    return <div className="bg-white aspect-square rounded-lg"></div>;
-                            }
-                        })()}
+                <div className="relative grid grid-cols-6 gap-0 bg-white border-4 border-orange-400 aspect-[6/5] w-full z-0">
+                    {boardData.map((row) => row.map((cell) => (
+                        <div key={cell.id} className="aspect-square border border-orange-100 flex flex-col justify-start p-0.5 relative bg-white overflow-hidden">
+
+                            <span className={`absolute top-1 right-1.5 font-black leading-none z-10 text-right ${
+                                cell.label === "START" || cell.label === "FINISH"
+                                ? "text-slate-800 text-[10px] sm:text-xs tracking-tighter"
+                                : "text-gray-300 text-[9px] sm:text-[11px]"
+                            }`}>
+                                {cell.label}
+                            </span>
+
+                            <div className="absolute inset-0 flex items-center justify-center pointer-events-none mt-2 z-30">
+                                <div className="flex flex-wrap gap-0 justify-center items-center">
+                                    {players?.filter(p => p.position === cell.id).map((p) => (
+                                        <img key={p.id} src={getPionAsset(p.id)} className="w-6 h-6 sm:w-8 h-8 object-contain drop-shadow-md animate-bounce" />
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    )))}
+
+                    {/* RINTANGAN MANUAL */}
+                    <div className="absolute pointer-events-none z-10" style={{ bottom: '3%', left: '66%', width: '12%', height: '34%' }}><img src={gambarTangga} className="w-full h-full object-contain" /></div>
+                    <div className="absolute pointer-events-none z-10" style={{ bottom: '40%', left: '1%', width: '12%', height: '34%' }}><img src={gambarTangga} className="w-full h-full object-contain" /></div>
+                    <div className="absolute pointer-events-none z-10" style={{ bottom: '48%', left: '58%', width: '18%', height: '26%', transform: 'scaleX(-1) rotate(25deg)' }}><img src={gambarTanggaMiring} className="w-full h-full object-contain" /></div>
+                    <div className="absolute pointer-events-none z-10" style={{ bottom: '18%', left: '6%', width: '38%', height: '46%', transform: 'scaleX(-1) rotate(25deg)' }}><img src={gambarUlar} className="w-full h-full object-contain" /></div>
+                    <div className="absolute pointer-events-none z-10" style={{ bottom: '45%', left: '9%', width: '48%', height: '56%', transform: ' rotate(-50deg)' }}><img src={gambarUlarMangap} className="w-full h-full object-contain" /></div>
+                    <div className="absolute pointer-events-none z-10" style={{ bottom: '2%', left: '32%', width: '38%', height: '36%', transform: 'rotate(40deg)' }}><img src={gambarUlar} className="w-full h-full object-contain" /></div>
+                </div>
+
+                {/* MODAL QUIZ */}
+                {phase === "quiz" && activeQuestion && (
+                    <div className="absolute inset-0 z-[100] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-fade-in rounded-[1.5rem]">
+                        <div className="bg-[#FFF9EB] w-full max-w-[320px] rounded-[2rem] border-[6px] border-[#5D4037] shadow-2xl p-4 flex flex-col items-center gap-2 relative scale-95">
+                            <h2 className="text-lg font-black text-[#5D4037] uppercase tracking-tighter">SOAL KOTAK NO {players[turn]?.position + 1}</h2>
+
+                            {activeQuestion.gambar && (
+                                <div className="bg-white rounded-xl p-4 shadow-inner border border-[#5D4037]/10 w-full flex justify-center h-[120px]">
+                                    <img
+                                        src={activeQuestion.gambar}
+                                        alt="Gambar Soal"
+                                        className="w-full h-full object-contain drop-shadow-md animate-fade-in"
+                                        onError={(e) => {
+                                            e.target.onerror = null;
+                                            e.target.style.display = 'none';
+                                        }}
+                                    />
+                                </div>
+                            )}
+
+                            <div className="text-center mt-2 w-full px-2">
+                                <h3 className="text-xl md:text-2xl font-black text-[#2E7D32] leading-tight break-words">
+                                    {activeQuestion.soal}
+                                </h3>
+                            </div>
+
+                            {/* TAMPILAN CLUE RANDOM (Sesuai Player ID) */}
+                            {currentFailedAttempts > 0 && isMyTurn && (
+                                <div className="w-full flex flex-col items-center mt-1 animate-fade-in">
+                                    <span className="text-[10px] font-black text-orange-500 uppercase tracking-widest mb-1">Bantuan Huruf Acak:</span>
+                                    <div className="flex flex-wrap gap-1 justify-center">
+                                        {activeQuestion.jawaban.split('').map((char, index) => {
+                                            if (char === ' ') return <span key={index} className="w-3"></span>;
+
+                                            // Cek apakah index ini termasuk di daftar clue yang udah kebuka buat pemain ini
+                                            const isRevealed = revealedIndices.includes(index);
+
+                                            return (
+                                                <span key={index} className="text-lg md:text-xl font-black text-orange-700 bg-orange-100 px-2 py-1 rounded-md border-2 border-orange-300 shadow-sm min-w-[28px] text-center">
+                                                    {isRevealed ? char.toUpperCase() : '?'}
+                                                </span>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+
+                            <div className="w-full flex flex-col gap-2 mt-2">
+                                {isMyTurn ? (
+                                    <>
+                                        <input
+                                            type="text"
+                                            placeholder="Ketik jawabanmu..."
+                                            className="w-full text-center text-md font-black border-2 border-[#5D4037]/20 rounded-lg py-2 bg-white text-slate-800 outline-none focus:border-red-500 transition-all shadow-inner uppercase"
+                                            value={quizAnswer}
+                                            onChange={(e) => setQuizAnswer(e.target.value)}
+                                            onKeyDown={(e) => e.key === 'Enter' && submitQuiz()}
+                                        />
+                                        <button onClick={submitQuiz} className="w-full py-2.5 bg-red-600 hover:bg-red-700 text-white font-black text-lg rounded-xl shadow-[0_4px_0_rgb(153,27,27)] active:translate-y-1 active:shadow-none transition-all">KIRIM</button>
+                                    </>
+                                ) : (
+                                    <p className="text-slate-500 font-bold text-[10px] text-center italic py-2 leading-tight">Giliran {activePlayerName} menjawab...</p>
+                                )}
+                            </div>
+
+                            <div className="h-4 flex items-center justify-center">
+                                {answerFeedback === "correct" && <p className="text-emerald-600 font-black text-[12px]">✅ Jawaban Anda Benar</p>}
+                                {answerFeedback === "wrong" && <p className="text-red-600 font-black text-[12px]">❌ Jawaban Anda Salah</p>}
+                            </div>
+                        </div>
                     </div>
-                );
-            })}
-            <svg className="absolute inset-0 w-full h-full pointer-events-none overflow-visible z-5">
-                <defs> {svgConnectors.filter(c => c.type === 'snake').map(connector => (<linearGradient key={`snakeGradient-${connector.id}`} id={`snakeGradient-${connector.id}`} x1={connector.startX} y1={connector.startY} x2={connector.endX} y2={connector.endY} gradientUnits="userSpaceOnUse"> <stop offset="0%" stopColor="#4CAF50" stopOpacity="1" /> <stop offset="100%" stopColor="#A1887F" stopOpacity="0.8" /> </linearGradient>))} </defs>
-                {svgConnectors.map((connector) => {
-                    const isMobile = boardSize.width < 640;
-                    const cellSize = boardSize.width / 6;
-                    if (connector.type === 'snake') {
-                        const snakeStrokeWidth = isMobile ? Math.max(6, cellSize * 0.18) : 18;
-                        const headRadius = isMobile ? Math.max(2, cellSize * 0.06) : 5;
-                        const eyeRadius = headRadius * 0.4;
-                        return (<g key={connector.id}>
-                            <path d={connector.path} fill="none" stroke={`url(#snakeGradient-${connector.id})`} strokeWidth={snakeStrokeWidth} strokeLinecap="round" style={{ filter: 'drop-shadow(2px 2px 3px rgba(0,0,0,0.3))' }} />
-                            <circle cx={connector.startX} cy={connector.startY} r={headRadius} fill="white" stroke="black" strokeWidth="1" />
-                            <circle cx={connector.startX} cy={connector.startY} r={eyeRadius} fill="black" />
-                        </g>);
-                    } else if (connector.type === 'ladder') {
-                        const ladderWidth = isMobile ? Math.max(10, cellSize * 0.22) : 20;
-                        const railStrokeWidth = isMobile ? Math.max(2, cellSize * 0.05) : 4;
-                        const rungSpacing = isMobile ? Math.max(15, cellSize * 0.35) : 25;
-                        const numRungs = Math.floor(connector.distance / rungSpacing);
-                        const perpAngle = connector.angle + Math.PI / 2;
-                        const railOffsetX = (ladderWidth / 2) * Math.cos(perpAngle);
-                        const railOffsetY = (ladderWidth / 2) * Math.sin(perpAngle);
-                        const rail1_startX = connector.startX - railOffsetX;
-                        const rail1_startY = connector.startY - railOffsetY;
-                        const rail1_endX = connector.endX - railOffsetX;
-                        const rail1_endY = connector.endY - railOffsetY;
-                        const rail2_startX = connector.startX + railOffsetX;
-                        const rail2_startY = connector.startY + railOffsetY;
-                        const rail2_endX = connector.endX + railOffsetX;
-                        const rail2_endY = connector.endY + railOffsetY;
-                        return (<g key={connector.id} style={{ filter: 'drop-shadow(2px 2px 3px rgba(0,0,0,0.2))' }}>
-                            <line x1={rail1_startX} y1={rail1_startY} x2={rail1_endX} y2={rail1_endY} stroke="#8D6E63" strokeWidth={railStrokeWidth} strokeLinecap="round" />
-                            <line x1={rail2_startX} y1={rail2_startY} x2={rail2_endX} y2={rail2_endY} stroke="#8D6E63" strokeWidth={railStrokeWidth} strokeLinecap="round" />
-                            {Array.from({ length: numRungs }).map((_, i) => {
-                                const rungRatio = (i + 1) / (numRungs + 1);
-                                const rungX1 = rail1_startX + (rail1_endX - rail1_startX) * rungRatio;
-                                const rungY1 = rail1_startY + (rail1_endY - rail1_startY) * rungRatio;
-                                const rungX2 = rail2_startX + (rail2_endX - rail2_startX) * rungRatio;
-                                const rungY2 = rail2_startY + (rail2_endY - rail2_startY) * rungRatio;
-                                return (<line key={`rung-${connector.id}-${i}`} x1={rungX1} y1={rungY1} x2={rungX2} y2={rungY2} stroke="#A1887F" strokeWidth={railStrokeWidth} strokeLinecap="round" />)
-                            })}
-                        </g>);
-                    }
-                    return null;
-                })}
-            </svg>
+                )}
+            </div>
+
+            {/* PANEL SAKTI KANAN */}
+            <div className="flex-none w-full max-w-[280px] lg:h-full lg:max-h-[700px] flex flex-col gap-3 bg-[#D32F2F] p-3 rounded-[1.5rem] border-4 border-yellow-400 shadow-2xl self-center overflow-hidden">
+
+                {/* FIX: TAMPILAN DINAMIS PEMAIN 1 & 2 */}
+                {players?.some(p => p.id === 1) || players?.some(p => p.id === 2) ? (
+                    <div className="grid grid-cols-2 gap-2 flex-none">
+                        {players?.some(p => p.id === 1) && <PlayerCard id={1} colorClass="bg-[#E53935]" />}
+                        {players?.some(p => p.id === 2) && <PlayerCard id={2} colorClass="bg-[#1E88E5]" />}
+                    </div>
+                ) : null}
+
+                <div className="flex-1 bg-white rounded-xl p-2 flex flex-col items-center justify-center gap-2 border-4 border-gray-200 shadow-inner overflow-hidden">
+                    <div className="text-center">
+                        <p className="text-[12px] font-black text-slate-400 uppercase tracking-widest leading-none">Giliran</p>
+                        <p className="text-2xl font-black text-red-600 uppercase mt-0.5">{activePlayerName || `P${turn + 1}`}</p>
+                    </div>
+
+                    <div className="bg-gray-50 p-3 rounded-3xl border-2 border-gray-100 shadow-md relative">
+                        <img src={getDiceAsset(diceRoll[0])} alt="Dice" className={`w-24 h-24 object-contain drop-shadow-md ${spinning ? 'animate-spin' : ''}`} />
+                    </div>
+
+                    <button
+                        onClick={onRoll}
+                        disabled={rolling || phase !== 'dice' || !isMyTurn}
+                        className={`w-full py-3 rounded-2xl font-black text-xl tracking-widest shadow-[0_5px_0_rgb(185,28,28)] transition-all active:translate-y-1 active:shadow-none ${rolling || phase !== 'dice' || !isMyTurn
+                                ? 'bg-gray-200 text-gray-400 cursor-not-allowed shadow-none'
+                                : 'bg-red-600 hover:bg-red-700 text-white animate-pulse'
+                            }`}
+                    >
+                        {rolling ? 'M E L E M P A R...' : 'L E M P A R'}
+                    </button>
+                    <p className="text-[10px] font-bold text-gray-400 italic text-center leading-tight">
+                        {phase === 'dice' ? "Klik untuk melempar dadunya!" : "Tunggu kuis selesai..."}
+                    </p>
+                </div>
+
+                {/* FIX: TAMPILAN DINAMIS PEMAIN 3 & 4 */}
+                {players?.some(p => p.id === 3) || players?.some(p => p.id === 4) ? (
+                    <div className="grid grid-cols-2 gap-2 flex-none">
+                        {players?.some(p => p.id === 3) && <PlayerCard id={3} colorClass="bg-[#43A047]" />}
+                        {players?.some(p => p.id === 4) && <PlayerCard id={4} colorClass="bg-[#FDD835]" />}
+                    </div>
+                ) : null}
+
+            </div>
         </div>
     );
 };
